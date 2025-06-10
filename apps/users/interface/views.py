@@ -1,34 +1,66 @@
-from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import render
-from django.http import JsonResponse, HttpRequest, HttpResponseNotAllowed
-import json
+from rest_framework import status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from rest_framework.authtoken.models import Token
 
 from apps.users.infrastructure.repositories import DjangoUserRepository
-from apps.users.application.use_cases import RegisterUser
+from apps.users.application.use_cases import RegisterUser, LoginUser
 
-@csrf_exempt
-def register_view(request: HttpRequest):
-    if request.method == "GET":
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
         return render(request, "users/register.html")
-
-    elif request.method == "POST":
-        email = request.POST.get("email")
-        password = request.POST.get("password")
-        username = request.POST.get("username")
-
+    
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+        username = request.data.get("username")
+        
         try:
             repo = DjangoUserRepository()
             use_case = RegisterUser(repo)
             user = use_case.execute(email=email, password=password, username=username)
-
-            return JsonResponse({
+            
+            token, created = Token.objects.get_or_create(user=user)
+            
+            return Response({
                 "id": user.id,
                 "email": user.email,
-                "username": user.username
-            }, status=201)
-
+                "username": user.username,
+                "token": token.key
+            }, status=status.HTTP_201_CREATED)
+            
         except Exception as e:
-            return JsonResponse({"error": str(e)}, status=400)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    else:
-        return HttpResponseNotAllowed(["GET", "POST"])
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        return render(request, "users/login.html")
+    
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+        
+        repo = DjangoUserRepository()
+        use_case = LoginUser(repo)
+        result = use_case.execute(email=email, password=password)
+        
+        if result.success:
+            token, created = Token.objects.get_or_create(user=result.user)
+            
+            return Response({
+                "id": result.user.id, 
+                "email": result.user.email,
+                "username": result.user.username,
+                "token": token.key
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                "error": result.error
+            }, status=status.HTTP_401_UNAUTHORIZED)
